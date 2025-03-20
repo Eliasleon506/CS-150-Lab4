@@ -607,7 +607,7 @@ Main Layout
 """
 
 
-# In the layout, place the card below the existing content
+
 app.layout = dbc.Container(
     [
         dbc.Row(
@@ -635,7 +635,7 @@ app.layout = dbc.Container(
                         dcc.Graph(id="returns_chart", className="pb-4"),
                         html.Hr(),
                         html.Div(id="summary_table"),
-                        allocation_summary_card,  # Add the summary card here
+                        allocation_summary_card,
                     ]
                 ),
             ]
@@ -747,7 +747,6 @@ def update_pie(stocks, cash):
 def update_stock_slider_or_recall(cash, n_clicks, initial_stock_value):
     global history_df
 
-    # Initialize history_df if it is empty (e.g., on initial load)
     if 'history_df' not in globals():
         history_df = pd.DataFrame(columns=[
             "Cash Allocation (%)", "Stock Allocation (%)",
@@ -759,19 +758,18 @@ def update_stock_slider_or_recall(cash, n_clicks, initial_stock_value):
     triggered_input = ctx.triggered[0]["prop_id"].split(".")[0]
 
     if triggered_input == "previous_setting_button" and n_clicks > 0 and len(history_df) > 0:
-        # Make sure we're using the correct index and avoid accessing out-of-bounds
+
         if n_clicks < len(history_df):
             history_entry = history_df.iloc[-n_clicks]
         else:
-            history_entry = history_df.iloc[-1]  # Use the last entry if n_clicks exceeds available history
+            history_entry = history_df.iloc[-1]
 
         cash_allocation = history_entry["Cash Allocation (%)"]
         stock_allocation = history_entry["Stock Allocation (%)"]
 
-        # Update slider values based on previous settings
         max_slider = 100 - int(cash_allocation)
 
-        # Calculate whether to disable the button (if all history entries are used)
+
         button_disabled = n_clicks >= len(history_df)
 
         return (
@@ -779,16 +777,14 @@ def update_stock_slider_or_recall(cash, n_clicks, initial_stock_value):
             update_stock_slider(max_slider),
             stock_allocation,
             cash_allocation,
-            button_disabled  # Disable the button if we’ve reached the end of history
+            button_disabled
         )
-
-    # Default behavior if no previous setting is recalled
     max_slider = 100 - int(cash)
     stocks = min(max_slider, initial_stock_value)
 
-    # Ensure the button is enabled if we're not recalling history
+
     return max_slider, update_stock_slider(
-        max_slider), stocks, cash, False  # Button enabled when no history is recalled
+        max_slider), stocks, cash, False
 
 def update_stock_slider(max_slider):
     if max_slider > 50:
