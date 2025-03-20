@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-from dash import Dash, dcc, html, dash_table, Input, Output, State, callback_context
+from dash import Dash, dcc, html, dash_table, Input, Output, State, callback_context,no_update
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import pandas as pd
+from datetime import datetime
 
 app = Dash(
     __name__,
-    external_stylesheets=[dbc.themes.SPACELAB, dbc.icons.FONT_AWESOME],
+    external_stylesheets=[dbc.themes.MINTY, dbc.icons.FONT_AWESOME],
 )
 
 #  make dataframe from  spreadsheet:
@@ -18,10 +19,23 @@ START_YR = 2007
 
 # since data is as of year end, need to add start year
 df = (
-    df.append({"Year": MIN_YR - 1}, ignore_index=True)
+    pd.concat([df, pd.DataFrame([{"Year": MIN_YR - 1}])], ignore_index=True)
     .sort_values("Year", ignore_index=True)
     .fillna(0)
 )
+
+## data frame for input histroy
+history_df = pd.DataFrame(columns=["Date and Time of Update",
+    "Cash Allocation (%)",
+    "Stock Allocation (%)",
+    "Bond Allocation (%)",
+    "Start Year",
+    "Planning Time (years)",
+    "Start Amount ($)",
+    "End Amount ($)",
+    "CAGR (%)"
+])
+
 
 COLORS = {
     "cash": "#3cb521",
@@ -177,28 +191,40 @@ Figures
 """
 
 
-def make_pie(slider_input, title):
+def make_bar_chart(slider_input, title):
+    # The slider_input should contain values for Cash, Bonds, and Stocks (as in the original pie chart)
+    cash_value, bond_value, stock_value = slider_input
+
     fig = go.Figure(
         data=[
-            go.Pie(
-                labels=["Cash", "Bonds", "Stocks"],
-                values=slider_input,
-                textinfo="label+percent",
+            go.Bar(
+                x=["Cash", "Bonds", "Stocks"],
+                y=[cash_value, bond_value, stock_value],
+                text=[f"{cash_value}%" if i == 0 else f"{bond_value}%" if i == 1 else f"{stock_value}%"
+                      for i in range(3)],
                 textposition="inside",
-                marker={"colors": [COLORS["cash"], COLORS["bonds"], COLORS["stocks"]]},
-                sort=False,
-                hoverinfo="none",
+                marker={"color": [COLORS["cash"], COLORS["bonds"], COLORS["stocks"]]},
+                hoverinfo="none"
             )
         ]
     )
+
     fig.update_layout(
         title_text=title,
         title_x=0.5,
         margin=dict(b=25, t=75, l=35, r=25),
         height=325,
         paper_bgcolor=COLORS["background"],
+        xaxis=dict(title="Asset Class", showgrid=False),
+        yaxis=dict(
+            title="Percentage",
+            range=[0, 100],
+            tickformat="%{y:.0f}"  # Remove decimals and show only whole numbers
+        ),
     )
+
     return fig
+
 
 
 def make_line_chart(dff):
@@ -269,6 +295,17 @@ Make Tabs
 
 # =======Play tab components
 
+# Add Previous Setting button in the 'Play' tab
+
+allocation_summary_card = dbc.Card(
+    [
+        html.H4("Bond Allocation %", className="card-title"),
+        html.Div(id="bond_allocation_display", className="lead text-center"),
+    ],
+    body=True,
+    className="mt-4",
+)
+
 asset_allocation_card = dbc.Card(asset_allocation_text, className="mt-2")
 
 slider_card = dbc.Card(
@@ -297,6 +334,7 @@ slider_card = dbc.Card(
             value=50,
             included=False,
         ),
+        dbc.Button("Previous Setting", id="previous_setting_button", n_clicks=0, disabled=True),
     ],
     body=True,
     className="mt-4",
@@ -461,6 +499,7 @@ tabs = dbc.Tabs(
             className="pb-4",
         ),
         dbc.Tab([results_card, data_source_card], tab_id="tab-3", label="Results"),
+dbc.Tab([dbc.CardHeader("History of Parameter Changes"),html.Div(id="history_table"),],tab_id="tab-4",label="History",)
     ],
     id="tabs",
     active_tab="tab-2",
@@ -516,7 +555,9 @@ def backtest(stocks, cash, start_bal, nper, start_yr):
             dff.loc[yr, "Bonds"] = dff.loc[yr, "Bonds"] * (
                 1 + dff.loc[yr, "10yr T.Bond"]
             )
-            dff.loc[yr, "Total"] = dff.loc[yr, ["Cash", "Bonds", "Stocks"]].sum()
+
+            ## I wasn't getting
+            dff.loc[yr, "Total"] = int(dff.loc[yr, ["Cash", "Bonds", "Stocks"]].sum())
 
     dff = dff.reset_index(drop=True)
     columns = ["Cash", "Stocks", "Bonds", "Total"]
@@ -565,15 +606,25 @@ def worst(dff, asset):
 Main Layout
 """
 
+
+# In the layout, place the card below the existing content
 app.layout = dbc.Container(
     [
         dbc.Row(
-            dbc.Col(
+            dbc.Col([
                 html.H2(
                     "Asset Allocation Visualizer",
                     className="text-center bg-primary text-white p-2",
                 ),
-            )
+                html.H4(
+                    "Elias Leon",
+                    className="text-center"
+                ),
+                html.H4(
+                    "CS-150 : Community Action Computing",
+                    className="text-center"
+                ),
+            ])
         ),
         dbc.Row(
             [
@@ -584,26 +635,85 @@ app.layout = dbc.Container(
                         dcc.Graph(id="returns_chart", className="pb-4"),
                         html.Hr(),
                         html.Div(id="summary_table"),
-                        html.H6(datasource_text, className="my-2"),
-                    ],
-                    width=12,
-                    lg=7,
-                    className="pt-4",
+                        allocation_summary_card,  # Add the summary card here
+                    ]
                 ),
-            ],
-            className="ms-1",
+            ]
         ),
-        dbc.Row(dbc.Col(footer)),
     ],
     fluid=True,
 )
-
 
 """
 ==========================================================================
 Callbacks
 """
 
+
+@app.callback(
+    Output("history_table", "children"),
+    [
+        Input("cash", "value"),
+        Input("stock_bond", "value"),
+        Input("start_yr", "value"),
+        Input("planning_time", "value"),
+        Input("starting_amount", "value"),
+        Input("ending_amount", "value"),
+        Input("cagr", "value")
+    ],
+    prevent_initial_call=True,
+)
+def update_history(cash_allocation, stock_allocation, start_year, planning_time, start_amount, end_amount, cagr_value):
+    global history_df
+
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    new_entry = {
+        "Cash Allocation (%)": cash_allocation,
+        "Stock Allocation (%)": stock_allocation,
+        "Bond Allocation (%)": 100 - (cash_allocation + stock_allocation),
+        "Start Year": start_year,
+        "Planning Time (years)": planning_time,
+        "Start Amount ($)": start_amount,
+        "End Amount ($)": end_amount,
+        "CAGR (%)": cagr_value,
+        "Date and Time of Update": current_time
+    }
+
+
+    new_entry_df = pd.DataFrame([new_entry])
+    history_df = pd.concat([history_df, new_entry_df], ignore_index=True)
+    history_df.reset_index(drop=True, inplace=True)
+
+    return dash_table.DataTable(
+        id="history_table_display",
+        columns=[
+            {"name": col, "id": col} for col in history_df.columns
+        ],
+        data=history_df.to_dict('records'),
+        style_table={'height': '200px', 'overflowY': 'auto'},
+        style_cell={
+            'textAlign': 'center',
+            'padding': '3px',
+            'fontSize': '12px'
+        },
+        style_header={'fontWeight': 'bold', 'fontSize': '14px'},
+        style_data={'whiteSpace': 'normal', 'height': 'auto'},
+        style_cell_conditional=[
+            {'if': {'column_id': c}, 'width': '80px'} for c in history_df.columns
+        ]
+    )
+
+
+@app.callback(
+    Output("bond_allocation_display", "children"),
+    Input("stock_bond", "value"),
+    Input("cash", "value"),
+)
+def update_bond_allocation(stock, cash):
+    bond_value = 100 - (stock+ cash)
+    # The bond allocation is simply the slider value
+    return f"{bond_value}%"
 
 @app.callback(
     Output("allocation_pie_chart", "figure"),
@@ -615,12 +725,12 @@ def update_pie(stocks, cash):
     slider_input = [cash, bonds, stocks]
 
     if stocks >= 70:
-        investment_style = "Aggressive"
+        title = "Aggressive"
     elif stocks <= 30:
-        investment_style = "Conservative"
+        title = "Conservative"
     else:
-        investment_style = "Moderate"
-    figure = make_pie(slider_input, investment_style + " Asset Allocation")
+        title = "Moderate"
+    figure = make_bar_chart([cash, bonds, stocks], title)
     return figure
 
 
@@ -628,22 +738,67 @@ def update_pie(stocks, cash):
     Output("stock_bond", "max"),
     Output("stock_bond", "marks"),
     Output("stock_bond", "value"),
+    Output("cash", "value"),
+    Output("previous_setting_button", "disabled"),
     Input("cash", "value"),
+    Input("previous_setting_button", "n_clicks"),
     State("stock_bond", "value"),
 )
-def update_stock_slider(cash, initial_stock_value):
+def update_stock_slider_or_recall(cash, n_clicks, initial_stock_value):
+    global history_df
+
+    # Initialize history_df if it is empty (e.g., on initial load)
+    if 'history_df' not in globals():
+        history_df = pd.DataFrame(columns=[
+            "Cash Allocation (%)", "Stock Allocation (%)",
+            "Bond Allocation (%)", "Start Year", "Planning Time (years)",
+            "Start Amount ($)", "End Amount ($)", "CAGR (%)", "Date and Time of Update"
+        ])
+
+    ctx = callback_context
+    triggered_input = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if triggered_input == "previous_setting_button" and n_clicks > 0 and len(history_df) > 0:
+        # Make sure we're using the correct index and avoid accessing out-of-bounds
+        if n_clicks < len(history_df):
+            history_entry = history_df.iloc[-n_clicks]
+        else:
+            history_entry = history_df.iloc[-1]  # Use the last entry if n_clicks exceeds available history
+
+        cash_allocation = history_entry["Cash Allocation (%)"]
+        stock_allocation = history_entry["Stock Allocation (%)"]
+
+        # Update slider values based on previous settings
+        max_slider = 100 - int(cash_allocation)
+
+        # Calculate whether to disable the button (if all history entries are used)
+        button_disabled = n_clicks >= len(history_df)
+
+        return (
+            max_slider,
+            update_stock_slider(max_slider),
+            stock_allocation,
+            cash_allocation,
+            button_disabled  # Disable the button if we’ve reached the end of history
+        )
+
+    # Default behavior if no previous setting is recalled
     max_slider = 100 - int(cash)
     stocks = min(max_slider, initial_stock_value)
 
-    # formats the slider scale
+    # Ensure the button is enabled if we're not recalling history
+    return max_slider, update_stock_slider(
+        max_slider), stocks, cash, False  # Button enabled when no history is recalled
+
+def update_stock_slider(max_slider):
     if max_slider > 50:
         marks_slider = {i: f"{i}%" for i in range(0, max_slider + 1, 10)}
     elif max_slider <= 15:
         marks_slider = {i: f"{i}%" for i in range(0, max_slider + 1, 1)}
     else:
         marks_slider = {i: f"{i}%" for i in range(0, max_slider + 1, 5)}
-    return max_slider, marks_slider, stocks
 
+    return marks_slider
 
 @app.callback(
     Output("planning_time", "value"),
@@ -713,4 +868,4 @@ def update_totals(stocks, cash, start_bal, planning_time, start_yr):
 
 
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run(debug=True)
